@@ -294,6 +294,7 @@ def main():
     #     torch.cuda.synchronize()
     #     torch.cuda.empty_cache()
 
+
     # Original calculation 
     # Reset memory statistics
     print("Original Calculation")
@@ -313,7 +314,6 @@ def main():
     # clean up memory ...
     del charge
     torch.cuda.empty_cache()
-
    
 
     # New Calculation
@@ -334,6 +334,11 @@ def main():
     print("\nDifference between old and new calculations")
     with torch.no_grad():
         test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
+
+    del charge
+    torch.cuda.empty_cache()
+
+
 
 
 
