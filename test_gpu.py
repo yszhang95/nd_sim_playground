@@ -3,7 +3,11 @@ import time
 import numpy as np
 import psutil
 import os
+import tracemalloc
+#from memory_profiler import profile
+from torch.profiler import profile, ProfilerActivity
 
+#@profile
 def get_cpu_info():
     cpu_info = {
         'physical_cores': psutil.cpu_count(logical=False),
@@ -12,6 +16,7 @@ def get_cpu_info():
         'cpu_usage': psutil.cpu_percent(interval=1, percpu=True)
     }
     return cpu_info
+
 
 def get_gpu_info():
     if not torch.cuda.is_available():
@@ -26,6 +31,7 @@ def get_gpu_info():
         'multi_processor_count': torch.cuda.get_device_properties(0).multi_processor_count
     }
     return gpu_info
+
 
 def display_system_resources():
     print("=== System Resource Information ===")
@@ -50,6 +56,7 @@ def display_system_resources():
         print(f"Number of SMs: {gpu_info['multi_processor_count']}")
     else:
         print("\nNo GPU available")
+
 
 def compare_cpu_gpu_operations(size=1000000):
     # Create tensors
@@ -84,6 +91,7 @@ def compare_cpu_gpu_operations(size=1000000):
     gpu_numpy = gpu_result.cpu().numpy()
     print(f"\nResults match: {np.allclose(cpu_numpy, gpu_numpy)}")
 
+
 def memory_management_example():
     # Allocate tensor on GPU
     x = torch.randn(1000000, device='cuda')
@@ -98,9 +106,16 @@ def memory_management_example():
     print(f"Cached: {torch.cuda.memory_reserved() / 1e6:.2f} MB")
 
 if __name__ == "__main__":
-    display_system_resources()
-    print("\n" + "="*50 + "\n")
-    
+
+    # # Start tracing memory allocation
+    # tracemalloc.start()
+
+    #display_system_resources()
+    #print("\n" + "="*50 + "\n")
+
+    # Reset memory statistics
+    torch.cuda.reset_peak_memory_stats()
+
     # Check if GPU is available
     if torch.cuda.is_available():
         print(f"GPU available: {torch.cuda.get_device_name(0)}\n")
@@ -108,3 +123,26 @@ if __name__ == "__main__":
         memory_management_example()
     else:
         print("No GPU available!")
+
+    # Current and peak memory usage
+    current_mem = torch.cuda.memory_allocated() / 1024**2  # In MB
+    peak_mem = torch.cuda.max_memory_allocated() / 1024**2  # In MB
+
+    print(f"Current GPU memory usage: {current_mem:.2f} MB")
+    print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
+
+    # # Get peak memory (CPU) usage
+    # current, peak = tracemalloc.get_traced_memory()
+    # print(f"Current memory usage: {current / 1024 / 1024:.2f} MB")
+    # print(f"Peak memory usage: {peak / 1024 / 1024:.2f} MB")
+
+    # # Stop the tracing
+    # tracemalloc.stop()
+
+    with profile(activities=[ProfilerActivity.CUDA]) as prof:
+        a = torch.rand((1000, 1000), device='cuda')
+        b = torch.rand((1000, 1000), device='cuda')
+        c = a @ b
+
+    print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+    #print(prof.key_averages().table(sort_by="cuda_time_total"))
