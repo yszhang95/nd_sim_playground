@@ -61,7 +61,7 @@ def compute_sum_broadcasted_mask(a, b, c, mask, device):
 n_events = 1000
 device = 'cuda'
 a = torch.randn(n_events, 100, 1, 1, device=device)    # Shape: (100, 100, 1, 1)
-b = torch.randn(n_events, 1, 100, 1, device=device)    # Shape: (100, 1, 100, 1)
+b = torch.randn(n_events, 1, 100, 1, device=device)    # Shape: (100, 1, 100, 1) 
 c = torch.randn(n_events, 1, 1, 100, device=device)    # Shape: (100, 1, 1, 100)
 
 print("No Masking") 
