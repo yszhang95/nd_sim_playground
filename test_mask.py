@@ -64,7 +64,7 @@ a = torch.randn(n_events, 100, 1, 1, device=device)    # Shape: (100, 100, 1, 1)
 b = torch.randn(n_events, 1, 100, 1, device=device)    # Shape: (100, 1, 100, 1)
 c = torch.randn(n_events, 1, 1, 100, device=device)    # Shape: (100, 1, 1, 100)
 
-print("No Masking")
+print("No Masking") 
 torch.cuda.reset_peak_memory_stats()
 start_time = time.time()
 # Compute result for all events
