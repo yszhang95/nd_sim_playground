@@ -31,6 +31,7 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     batch_size = X0.size(0)
     grid_size = x.size()
     result_shape = (batch_size,) + grid_size
+    charge = torch.zeros(result_shape, device=device, dtype=torch.float32)
 
     # Prepare for broadcasting
     x0, y0, z0 = [X0[:,i].view(-1, 1, 1, 1) for i in range(3)]
@@ -64,10 +65,8 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     erfArgDenominator = sqrt2 * deltaSquareSqrt * sx * sy * sz
 
     # Pre-allocate the final result tensor
-    #charge = torch.zeros(result_shape, device=device, dtype=torch.float32)
 
-    #Calculate final charge
-
+    
     charge = -QoverDeltaSquareSqrt4pi * torch.exp(-0.5 * (
         sy2 * torch.pow(x * dz01 + (z1*x0 - z0*x1) - z * dx01, 2) +
         sx2 * torch.pow(y * dz01 + (z1*y0 - z0*y1) - z * dy01, 2) +
@@ -84,23 +83,36 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
             sxsz2 * (y - y1) * dy01
         )/erfArgDenominator)
     )
-    
     return charge
 
 
-
-
-
-
-
-def gauss_conv_line_3d(Q, X0, X1, Sigma, x, y, z, device='cuda'):
+def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     """
-    Simplified version of GaussConvLine3D to calculate charge distribution
-    for a line segment in 3D space.
+    Calculate the 3D Gaussian convolution along a line segment with masking.
+    This function computes the charge distribution from a line-segment source
+    convoluted with a 3D Gaussian distribution, but only at the positions 
+    where `mask` is True.
+
+    Args:
+        Q (torch.Tensor): Charge values, shape: [batch_size]
+        X0 (torch.Tensor): Starting points of line segments, shape: [batch_size, 3]
+        X1 (torch.Tensor): Ending points of line segments, shape: [batch_size, 3]
+        Sigma (torch.Tensor): Std dev in x, y, z directions, shape: [batch_size, 3]
+        x (torch.Tensor): x-coordinates of the 3D grid, shape: [nx, ny, nz]
+        y (torch.Tensor): y-coordinates of the 3D grid, shape: [nx, ny, nz]
+        z (torch.Tensor): z-coordinates of the 3D grid, shape: [nx, ny, nz]
+            (Typically created from something like `torch.meshgrid(x1d, y1d, z1d, indexing='ij')`)
+        mask (torch.Tensor): Boolean mask, shape: [nx, ny, nz], where True indicates
+            that we should compute the Gaussian convolution at that grid point.
+        device (str, optional): Device to perform calculations on. Defaults to 'cuda'.
+
+    Returns:
+        torch.Tensor: A tensor of shape [batch_size, nx, ny, nz] containing
+            the computed charge distribution, with non-zero values only
+            where `mask` is True.
     """
     sqrt2 = np.sqrt(2)
     
-    # Move inputs to GPU and ensure they're float32
     Q = Q.to(device, dtype=torch.float32)
     X0 = X0.to(device, dtype=torch.float32)
     X1 = X1.to(device, dtype=torch.float32)
@@ -116,163 +128,114 @@ def gauss_conv_line_3d(Q, X0, X1, Sigma, x, y, z, device='cuda'):
         raise ValueError(f'X1 shape must be (N, 3), got {X1.shape}')
     if len(Sigma.shape) != 2 or Sigma.shape[1] != 3:
         raise ValueError(f'Sigma shape must be (N, 3), got {Sigma.shape}')
-
+    
     # Pre-allocate tensors for intermediate calculations
     batch_size = X0.size(0)
     grid_size = x.size()
     result_shape = (batch_size,) + grid_size
-    
-    # Reshape x, y, z to match broadcasting requirements
-    # x_expanded = x.unsqueeze(0)  # Shape: [1, nx, ny, nz]
-    # y_expanded = y.unsqueeze(0)  # Shape: [1, nx, ny, nz]
-    # z_expanded = z.unsqueeze(0)  # Shape: [1, nx, ny, nz]
-    
-    # Pre-allocate the final result tensor
     charge = torch.zeros(result_shape, device=device, dtype=torch.float32)
 
-    # Reshape start and end points for broadcasting
-    x0, y0, z0 = [X0[:,i].view(-1, 1, 1, 1) for i in range(3)]  # Shape: [batch, 1, 1, 1]
-    x1, y1, z1 = [X1[:,i].view(-1, 1, 1, 1) for i in range(3)]  # Shape: [batch, 1, 1, 1]
-    sx, sy, sz = [Sigma[:,i].view(-1, 1, 1, 1) for i in range(3)]  # Shape: [batch, 1, 1, 1]
+    mask = mask.to(device)
+    # Get masked indices
+    x_indices, y_indices, z_indices = torch.where(mask)
+
+    xpos = x[x_indices, y_indices, z_indices]
+    ypos = y[x_indices, y_indices, z_indices]
+    zpos = z[x_indices, y_indices, z_indices]
+
+    # Reshape parameters for batch computation
+    Q = Q.view(batch_size, 1)
+    x0 = X0[:, 0].view(batch_size, 1)
+    y0 = X0[:, 1].view(batch_size, 1)
+    z0 = X0[:, 2].view(batch_size, 1)
+    x1 = X1[:, 0].view(batch_size, 1)
+    y1 = X1[:, 1].view(batch_size, 1)
+    z1 = X1[:, 2].view(batch_size, 1)
     
-    # Calculate squared terms
-    sxsy = sx.mul(sy)
-    sxsz = sx.mul(sz)
-    sysz = sy.mul(sz)
+    sx = Sigma[:, 0].view(batch_size, 1)
+    sy = Sigma[:, 1].view(batch_size, 1)
+    sz = Sigma[:, 2].view(batch_size, 1)
     
-    # Square the results in-place
-    sxsy2 = sxsy**2
-    sxsz2 = sxsz**2
-    sysz2 = sysz**2
+    # Prepare coordinates for broadcasting
+    xpos = xpos.unsqueeze(0)  # [1, Nmask]
+    ypos = ypos.unsqueeze(0)  # [1, Nmask]
+    zpos = zpos.unsqueeze(0)  # [1, Nmask]
+    
+    # Calculate differences [batch_size, 1]
+    dx01 = x0 - x1
+    dy01 = y0 - y1
+    dz01 = z0 - z1
+    
+    # Calculate squared terms [batch_size, 1]
     sx2 = sx**2
     sy2 = sy**2
     sz2 = sz**2
+    sxsy2 = (sx * sy)**2
+    sxsz2 = (sx * sz)**2
+    sysz2 = (sy * sz)**2
     
-    # # Calculate differences
-    dx01 = (X0[:,0] - X1[:,0]).view(-1, 1, 1, 1)
-    dy01 = (X0[:,1] - X1[:,1]).view(-1, 1, 1, 1)
-    dz01 = (X0[:,2] - X1[:,2]).view(-1, 1, 1, 1)
-
-    # # Calculate delta terms
-    # deltaSquare = (
-    #     sysz2 * dx01**2 +
-    #     sxsy2 * dz01**2 + 
-    #     sxsz2 * dy01**2
-    # )
-    # deltaSquareSqrt = torch.sqrt(deltaSquare)
-
-    # # Calculate deltaSquare
-    deltaSquare = sysz2.mul(dx01.pow(2))
-    deltaSquare.add_(sxsy2.mul(dz01.pow(2)))
-    deltaSquare.add_(sxsz2.mul(dy01.pow(2)))
-    # Calculate deltaSquareSqrt (in-place)
-    deltaSquareSqrt = deltaSquare.sqrt()
-
-
-    # Calculate charge distribution
-    # QoverDeltaSquareSqrt4pi = Q / (deltaSquareSqrt * 4 * np.pi)
+    # Calculate delta terms [batch_size, 1]
+    deltaSquare = (
+        sysz2 * dx01**2 +
+        sxsy2 * dz01**2 + 
+        sxsz2 * dy01**2
+    )
+    deltaSquareSqrt = torch.sqrt(deltaSquare)
+    
+    # Calculate denominators [batch_size, 1]
+    QoverDelta = Q / (deltaSquareSqrt * 4.0 * np.pi)
     erfArgDenominator = sqrt2 * deltaSquareSqrt * sx * sy * sz
-
-    # Calculate QoverDeltaSquareSqrt4pi
-    QoverDeltaSquareSqrt4pi = Q.view(-1, 1, 1, 1) / (deltaSquareSqrt * 4 * np.pi)
-    # Calculate erfArgDenominator
-    erfArgDenominator = deltaSquareSqrt.mul(sqrt2).mul_(sx).mul_(sy).mul_(sz)
-        
-    #Calculate final charge
-    # Use a single temporary tensor and perform in-place operations to reduce memory usage
-    chunk_size = 16  # example slice size along z-dimension
-    charge_segments = []
-
-    for z_start in range(0, z.size(2), chunk_size):
-        z_end = min(z_start + chunk_size, z.size(2))
-        z_slice = z[..., z_start:z_end]  # slice the z dimension
-
-        # Do the same math on the sliced tensors
-        exp_term = torch.exp(-0.5 * (
-            sy2 * torch.pow(x[..., z_start:z_end] * dz01 + (z1*x0 - z0*x1) - z_slice * dx01, 2) +
-            sx2 * torch.pow(y[..., z_start:z_end] * dz01 + (z1*y0 - z0*y1) - z_slice * dy01, 2) +
-            sz2 * torch.pow(y[..., z_start:z_end] * dx01 + (x1*y0 - x0*y1) - x[..., z_start:z_end] * dy01, 2)
-        ) / deltaSquare)
-
-        erf_term = (
-            torch.erf((sysz2 * (x[..., z_start:z_end] - x0) * dx01 +
-                       sxsy2 * (z_slice - z0) * dz01 +
-                       sxsz2 * (y[..., z_start:z_end] - y0) * dy01) / erfArgDenominator)
-            - 
-            torch.erf((sysz2 * (x[..., z_start:z_end] - x1) * dx01 +
-                       sxsy2 * (z_slice - z1) * dz01 +
-                       sxsz2 * (y[..., z_start:z_end] - y1) * dy01) / erfArgDenominator)
-        )
-
-        partial_charge = -QoverDeltaSquareSqrt4pi * exp_term * erf_term
-        charge_segments.append(partial_charge)
-
-    # Reconstruct the full charge tensor
-    charge = torch.cat(charge_segments, dim=3)
-
-
-    # failed approach ...
-    # # Calculate exponential terms with proper broadcasting
-    # # Pre-allocate temporary tensor for calculations
-    # temp1 = torch.zeros_like(charge)  # Shape: [batch, nx, ny, nz]
-    # temp2 = torch.zeros_like(charge)  # Shape: [batch, nx, ny, nz]
-    # temp3 = torch.zeros_like(charge)  # Shape: [batch, nx, ny, nz]
-    # # Calculate terms with proper broadcasting
-    # # temp = x.mul(dz01) + (z1.mul(x0) - z0.mul(x1)) - z.mul(dx01)
-    # # exp_term.add_(sy.pow(2).mul(temp.pow(2)))
-    # # Perform calculations in-place
-    # # Compute safely with in-place operations
-    # temp2 = temp1.copy_(x).mul_(dz01).add_(z1.mul(x0) - z0.mul(x1))  
-    # temp2.sub_(temp1.copy_(z).mul_(dx01)) #.pow_(2)
-    # #charge = temp1.copy_(sy).pow_(2).mul_(temp2)
-    # charge = temp2
-    # # temp = y_expanded * dz01 + (z1 * y0 - z0 * y1) - z_expanded * dy01
-    # # exp_term += sx.pow(2) * temp.pow(2)
-    # temp2 = temp1.copy_(y).mul_(dz01).add_(z1.mul(y0) - z0.mul(y1))  
-    # temp2.sub_(temp1.copy_(z).mul_(dy01)).pow_(2)
-    # charge.add_(temp1.copy_(sx).pow_(2).mul_(temp2))
-    # # temp = y_expanded * dx01 + (x1 * y0 - x0 * y1) - x_expanded * dy01
-    # # exp_term += sz.pow(2) * temp.pow(2)
-    # temp2 = temp1.copy_(y).mul_(dx01).add_(x1.mul(y0) - x0.mul(y1))  
-    # temp2.sub_(temp1.copy_(x).mul_(dy01)).pow_(2)
-    # charge.add_(temp1.copy_(sz).pow_(2).mul_(temp2))
-    # #exp_term = (-0.5 * exp_term / deltaSquare).exp()
-    # charge = charge.mul_(-0.5).div_(deltaSquare).exp_()
-    # # # Calculate error function terms
-    # # erf_term1 = (sysz2 * (x_expanded - x0) * dx01 +
-    # #              sxsy2 * (z_expanded - z0) * dz01 +
-    # #              sxsz2 * (y_expanded - y0) * dy01) / erfArgDenominator
-    # temp2 = temp1.copy_(x).sub_(x0).mul_(dx01).mul_(sysz2)
-    # temp2.add_(temp1.copy_(z).sub_(z0).mul_(dz01).mul_(sxsy2))
-    # temp2.add_(temp1.copy_(y).sub_(y0).mul_(dy01).mul_(sxsz2))
-    # temp2.div_(erfArgDenominator) 
-    # temp3 = torch.erf(temp2)
-    # # erf_term2 = (sysz2 * (x_expanded - x1) * dx01 +
-    # #              sxsy2 * (z_expanded - z1) * dz01 +
-    # #              sxsz2 * (y_expanded - y1) * dy01) / erfArgDenominator
-    # temp2 = temp1.copy_(x).sub_(x1).mul_(dx01).mul_(sysz2)
-    # temp2.add_(temp1.copy_(z).sub_(z1).mul_(dz01).mul_(sxsy2))
-    # temp2.add_(temp1.copy_(y).sub_(y1).mul_(dy01).mul_(sxsz2))
-    # temp2.div_(erfArgDenominator)
-    # temp3.sub_(torch.erf(temp2))
-    # # Calculate final charge
-    # # charge = -QoverDeltaSquareSqrt4pi * exp_term * (torch.erf(erf_term1) - torch.erf(erf_term2))
-    # charge = charge.mul_(-QoverDeltaSquareSqrt4pi).mul_(temp3)
-
+    
+    # Calculate exponential term [batch_size, Nmask]
+    exp_term = torch.exp(-0.5 * (
+        sy2 * torch.pow(xpos * dz01 + (z1*x0 - z0*x1) - zpos * dx01, 2) +
+        sx2 * torch.pow(ypos * dz01 + (z1*y0 - z0*y1) - zpos * dy01, 2) +
+        sz2 * torch.pow(ypos * dx01 + (x1*y0 - x0*y1) - xpos * dy01, 2)
+    ) / deltaSquare)
+    
+    # Calculate error function term [batch_size, Nmask]
+    erf_term = (
+        torch.erf((
+            sysz2 * (xpos - x0) * dx01 +
+            sxsy2 * (zpos - z0) * dz01 +
+            sxsz2 * (ypos - y0) * dy01
+        ) / erfArgDenominator) -
+        torch.erf((
+            sysz2 * (xpos - x1) * dx01 +
+            sxsy2 * (zpos - z1) * dz01 +
+            sxsz2 * (ypos - y1) * dy01
+        ) / erfArgDenominator)
+    )
+    
+    # Calculate masked charge values [batch_size, Nmask]
+    masked_charge = -QoverDelta * exp_term * erf_term
+    
+    # Assign computed values back to the full grid
+    charge[:, x_indices, y_indices, z_indices] = masked_charge
+    
     return charge
 
 
-def test_consistency(Q, X0, X1, Sigma, x, y, z, device='cuda'):
+def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
-    result2 = gauss_conv_line_3d(Q, X0, X1, Sigma, x, y, z, device)
+    result2 = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
+
     
-    relative_diff = torch.abs(result1 - result2) / (torch.abs(result1) + 1e-10)
+
+    result1_mask = result1[:, mask]  # This will broadcast the batch dimension across the masked elements
+    result2_mask = result2[:, mask]  # This will broadcast the batch dimension across the masked elements
+    
+    # print(result1_mask)
+    # print(result2_mask)
+    # print(result1_mask - result2_mask)
+
+    relative_diff = torch.abs(result1_mask - result2_mask) / (torch.abs(result1_mask) + 1e-10)
     max_diff = torch.max(relative_diff)
     mean_diff = torch.mean(relative_diff)
     
     #print(result1- result2)
-    max_element = torch.max(result1 - result2)
-    min_element = torch.min(result1 - result2)
+    max_element = torch.max(result1_mask - result2_mask)
+    min_element = torch.min(result1_mask - result2_mask)
     print(f"Max, Min element in result1 - result2: {max_element.item()}, {min_element.item()}")
 
     return max_diff, mean_diff
@@ -281,9 +244,6 @@ def create_grid_3d(origin, spacing, shape, device='cuda'):
     """
     Create a 3D grid for charge calculation.
     """
-    # x = torch.arange(origin[0], origin[0] + shape[0] * spacing[0], spacing[0], device=device)
-    # y = torch.arange(origin[1], origin[1] + shape[1] * spacing[1], spacing[1], device=device)
-    # z = torch.arange(origin[2], origin[2] + shape[2] * spacing[2], spacing[2], device=device)
     # Create 1D tensors first
     x = torch.arange(origin[0], origin[0] + shape[0] * spacing[0], spacing[0], 
                     device=device, dtype=torch.float32)
@@ -302,13 +262,13 @@ def main():
     torch.cuda.empty_cache()  # Clear any existing allocations
 
     ndim = 100
-    nevent = 100
+    nevent = 500
 
     # Define grid parameters
     origin = (0.0, 0.0, 0.0)
     spacing = (0.1, 0.1, 0.1)
     shape = (ndim, ndim, ndim)
-    
+
     # Create grid on GPU
     x, y, z = create_grid_3d(origin, spacing, shape, device)
     
@@ -318,6 +278,21 @@ def main():
     X1 = torch.rand(nevent, 3, device=device)
     Sigma = torch.full((nevent, 3), 0.2, device=device)
     
+    # Making a mask
+    mask = torch.zeros(ndim, ndim, ndim, dtype=torch.bool)
+    num_ones = int(0.01 * mask.numel())  # 1% of total elements
+    indices = torch.randint(0, mask.numel(), (num_ones,))
+    mask.view(-1)[indices] = True
+
+
+    # # Warm-up runs
+    # print("Warming up...")
+    # for _ in range(3):
+    #     with torch.no_grad():
+    #         _ = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
+    #         _ = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
+    #     torch.cuda.synchronize()
+    #     torch.cuda.empty_cache()
 
     # Original calculation 
     # Reset memory statistics
@@ -326,7 +301,6 @@ def main():
     start_time = time.time()
     # Calculate charge distribution
     with torch.no_grad():
-        #test_consistency(Q, X0, X1, Sigma, x, y, z, device)
         charge = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
     gpu_time = time.time() - start_time
     
@@ -336,16 +310,19 @@ def main():
     print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
     print(f"GPU Time: {gpu_time:.4f} seconds")
 
+    # clean up memory ...
     del charge
+    torch.cuda.empty_cache()
 
-    # NEw Calculation
+   
+
+    # New Calculation
     print("New Calculation")
     torch.cuda.reset_peak_memory_stats()
     start_time = time.time()
     # Calculate charge distribution
     with torch.no_grad():
-        #test_consistency(Q, X0, X1, Sigma, x, y, z, device)
-        charge = gauss_conv_line_3d(Q, X0, X1, Sigma, x, y, z, device)
+        charge = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
     gpu_time = time.time() - start_time
     
     current_mem = torch.cuda.memory_allocated() / 1024**2  # In MB
@@ -356,7 +333,7 @@ def main():
 
     print("\nDifference between old and new calculations")
     with torch.no_grad():
-        test_consistency(Q, X0, X1, Sigma, x, y, z, device)
+        test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
 
 
 
@@ -365,15 +342,11 @@ def main():
     # print(f"Max charge density: {torch.max(charge).item():.6f}")
     # print(f"Min charge density: {torch.min(charge).item():.6f}")
 
-    # # Clean up
-    # del x, y, z, Q, X0, X1, Sigma, charge
-    # torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     if torch.cuda.is_available():
         print(f"GPU available: {torch.cuda.get_device_name(0)}\n")
 
-    
     
     # Start tracing memory allocation
     tracemalloc.start()
@@ -381,9 +354,6 @@ if __name__ == "__main__":
     # GPU Operation
     
     main()
-    
-
-    
 
     # Get peak memory (CPU) usage
     # current, peak = tracemalloc.get_traced_memory()
