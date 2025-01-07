@@ -3,6 +3,7 @@ import numpy as np
 import time
 import tracemalloc
 
+import torch.utils.benchmark as benchmark
 
 def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     """
@@ -281,47 +282,64 @@ def main():
     X1 = torch.rand(nevent, 3, device=device)
     Sigma = torch.full((nevent, 3), 0.2, device=device)
     
-    # Making a mask
-    mask = torch.zeros(ndim, ndim, ndim, dtype=torch.bool)
-    num_ones = int(0.01 * mask.numel())  # 1% of total elements
-    indices = torch.randint(0, mask.numel(), (num_ones,))
-    mask.view(-1)[indices] = True
+    # # Making a mask
+    # mask = torch.zeros(ndim, ndim, ndim, dtype=torch.bool)
+    # num_ones = int(0.01 * mask.numel())  # 1% of total elements
+    # indices = torch.randint(0, mask.numel(), (num_ones,))
+    # mask.view(-1)[indices] = True
 
 
     # Warm-up runs
-    print("Warming up...")
-    for _ in range(3):
-        with torch.no_grad():
-            _ = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
-            _ = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
+    # print("Warming up...")
+    # for _ in range(3):
+    #     with torch.no_grad():
+    #         _ = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
+    #         _ = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
+    #     torch.cuda.synchronize()
+    #     torch.cuda.empty_cache()
+
+    ffs = [0.01 * i for i in range(1, 45, 2)]
+    tmask = []
+    torig = []
 
     # Run multiple times
-    for run in range(10):
-        print(f"\nRun {run + 1}/10")
-    
+    for ff in ffs:
+        # print(f"\nRun {run + 1}/10")
+        mask = torch.zeros(ndim, ndim, ndim, dtype=torch.bool)
+        n1 = int(ff * mask.numel())  # ffx100% of total elements
+        indices = torch.randint(0, mask.numel(), (n1,))
+        mask.view(-1)[indices] = True
+
         # Define line segment parameters (directly on GPU)
-        Q = torch.ones(nevent, device=device)
-        X0 = torch.rand(nevent, 3, device=device)
-        X1 = torch.rand(nevent, 3, device=device)
-        Sigma = torch.full((nevent, 3), 0.2, device=device)
+        # Q = torch.ones(nevent, device=device)
+        # X0 = torch.rand(nevent, 3, device=device)
+        # X1 = torch.rand(nevent, 3, device=device)
+        # Sigma = torch.full((nevent, 3), 0.2, device=device)
     
         # Original calculation 
         print("Original Calculation")
         torch.cuda.reset_peak_memory_stats()
         start_time = time.time()
         with torch.no_grad():
-            charge = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
-        gpu_time = time.time() - start_time
+            # charge = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
+            tstats = benchmark.Timer(
+                stmt = 'gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)',
+                setup = 'from __main__ import gauss_conv_line_3d_orig',
+                globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z, 'device' : device}
+                )
+            m = tstats.adaptive_autorange(min_run_time=2)
+            print(m)
+            torig.append(m.mean)
+            
+        # gpu_time = time.time() - start_time
         
-        current_mem = torch.cuda.memory_allocated() / 1024**2
-        peak_mem = torch.cuda.max_memory_allocated() / 1024**2
-        print(f"Current GPU memory usage: {current_mem:.2f} MB")
-        print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
-        print(f"GPU Time: {gpu_time:.4f} seconds")
+        # current_mem = torch.cuda.memory_allocated() / 1024**2
+        # peak_mem = torch.cuda.max_memory_allocated() / 1024**2
+        # print(f"Current GPU memory usage: {current_mem:.2f} MB")
+        # print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
+        # print(f"GPU Time: {gpu_time:.4f} seconds")
 
-        del charge
+        # del charge
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
        
@@ -330,25 +348,36 @@ def main():
         torch.cuda.reset_peak_memory_stats()
         start_time = time.time()
         with torch.no_grad():
-            charge = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
-        gpu_time = time.time() - start_time
+            # charge = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
+            tstats = benchmark.Timer(
+                stmt = 'gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)',
+                setup = 'from __main__ import gauss_conv_line_3d_mask',
+                globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z,
+                         'mask': mask, 'device' : device}
+                )
+            m = tstats.blocked_autorange(min_run_time=2)
+            print(m)
+            tmask.append(m.mean)
+
+        # gpu_time = time.time() - start_time
         
-        current_mem = torch.cuda.memory_allocated() / 1024**2
-        peak_mem = torch.cuda.max_memory_allocated() / 1024**2
-        print(f"Current GPU memory usage: {current_mem:.2f} MB")
-        print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
-        print(f"GPU Time: {gpu_time:.4f} seconds")
+        # current_mem = torch.cuda.memory_allocated() / 1024**2
+        # peak_mem = torch.cuda.max_memory_allocated() / 1024**2
+        # print(f"Current GPU memory usage: {current_mem:.2f} MB")
+        # print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
+        # print(f"GPU Time: {gpu_time:.4f} seconds")
 
         print("Difference between old and new calculations")
         with torch.no_grad():
             test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
 
-        del charge
+        # del charge
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
 
-
+    print(torig, tmask)
+    return torig, tmask
 
     # print(f"Grid shape: {charge.shape}")
     # print(f"Total charge: {torch.sum(charge).item():.6f}")

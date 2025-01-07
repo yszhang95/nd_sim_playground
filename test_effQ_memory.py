@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import time
 import tracemalloc
-
+import torch.utils.benchmark as benchmark
 
 def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     """
@@ -296,9 +296,14 @@ def create_grid_3d(origin, spacing, shape, device='cuda'):
     x, y, z = torch.meshgrid(x, y, z, indexing='ij')
     return x, y, z
 
-def main():
+def main(record_global=True, record_local=False):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT = 10_000_000
 
+    if record_global == record_local:
+        record_local = not record_local
+        print('Cannot record global and local usage at the same time. Reset record_local to ', record_local)
+        
     torch.cuda.empty_cache()  # Clear any existing allocations
 
     ndim = 100
@@ -308,7 +313,11 @@ def main():
     origin = (0.0, 0.0, 0.0)
     spacing = (0.1, 0.1, 0.1)
     shape = (ndim, ndim, ndim)
-    
+
+    if record_global:
+        torch.cuda.memory._record_memory_history(
+            max_entries=MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT
+        )
     # Create grid on GPU
     x, y, z = create_grid_3d(origin, spacing, shape, device)
     
@@ -322,42 +331,82 @@ def main():
     # Original calculation 
     # Reset memory statistics
     print("Original Calculation")
+    torch.cuda.empty_cache()  # Clear any existing allocations
     torch.cuda.reset_peak_memory_stats()
     start_time = time.time()
     # Calculate charge distribution
+    if record_local:
+        torch.cuda.memory._record_memory_history(
+            max_entries=MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT
+        )
     with torch.no_grad():
         #test_consistency(Q, X0, X1, Sigma, x, y, z, device)
         charge = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
+    if record_local:
+        torch.cuda.memory._dump_snapshot("original_qeff.pickle")
+        torch.cuda.memory._record_memory_history(enabled=None)
+
     gpu_time = time.time() - start_time
     
     current_mem = torch.cuda.memory_allocated() / 1024**2  # In MB
     peak_mem = torch.cuda.max_memory_allocated() / 1024**2  # In MB
     print(f"\nCurrent GPU memory usage: {current_mem:.2f} MB")
     print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
+    print(f"Peak GPU memory reserved: {torch.cuda.max_memory_reserved()/1024**2:.2f} MB")
     print(f"GPU Time: {gpu_time:.4f} seconds")
 
     del charge
 
+    if record_local:
+        torig = benchmark.Timer(
+            stmt = 'gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)',
+            setup = 'from __main__ import gauss_conv_line_3d_orig',
+            globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z, 'device' : device}
+        )
+        print('From benchmark, mean =', torig.blocked_autorange().mean, 'sec\n')
+
     # NEw Calculation
     print("New Calculation")
+    torch.cuda.empty_cache()  # Clear any existing allocations
     torch.cuda.reset_peak_memory_stats()
     start_time = time.time()
     # Calculate charge distribution
+    if record_local:
+        torch.cuda.memory._record_memory_history(
+            max_entries=MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT
+        )
+
     with torch.no_grad():
         #test_consistency(Q, X0, X1, Sigma, x, y, z, device)
         charge = gauss_conv_line_3d(Q, X0, X1, Sigma, x, y, z, device)
+    if record_local:
+        torch.cuda.memory._dump_snapshot("chunked_qeff.pickle")
+        torch.cuda.memory._record_memory_history(enabled=None)
+
     gpu_time = time.time() - start_time
     
     current_mem = torch.cuda.memory_allocated() / 1024**2  # In MB
     peak_mem = torch.cuda.max_memory_allocated() / 1024**2  # In MB
     print(f"\nCurrent GPU memory usage: {current_mem:.2f} MB")
     print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
+    print(f"Peak GPU memory reserved: {torch.cuda.max_memory_reserved()/1024**2:.2f} MB")
     print(f"GPU Time: {gpu_time:.4f} seconds")
+
+    if record_local:
+        tchunk = benchmark.Timer(
+            stmt = 'gauss_conv_line_3d(Q, X0, X1, Sigma, x, y, z, device)',
+            setup = 'from __main__ import gauss_conv_line_3d',
+            globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z, 'device' : device}
+        )
+        print('From benchmark, mean =', tchunk.blocked_autorange().mean, 'sec')
+        
+    if record_global:
+        torch.cuda.memory._dump_snapshot("two_qeff.pickle")
+        torch.cuda.memory._record_memory_history(enabled=None)
 
     print("\nDifference between old and new calculations")
     with torch.no_grad():
         test_consistency(Q, X0, X1, Sigma, x, y, z, device)
-
 
 
     # print(f"Grid shape: {charge.shape}")
@@ -381,6 +430,7 @@ if __name__ == "__main__":
     # GPU Operation
     
     main()
+    main(False, True)
     
 
     
