@@ -5,13 +5,15 @@ import tracemalloc
 
 import torch.utils.benchmark as benchmark
 
+import matplotlib.pyplot as plt
+
 def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     """
     Simplified version of GaussConvLine3D to calculate charge distribution
     for a line segment in 3D space.
     """
     sqrt2 = np.sqrt(2)
-    
+
     Q = Q.to(device, dtype=torch.float32)
     X0 = X0.to(device, dtype=torch.float32)
     X1 = X1.to(device, dtype=torch.float32)
@@ -19,7 +21,7 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     x = x.to(device, dtype=torch.float32)
     y = y.to(device, dtype=torch.float32)
     z = z.to(device, dtype=torch.float32)
-        
+
     # Ensure correct shapes
     if len(X0.shape) != 2 or X0.shape[1] != 3:
         raise ValueError(f'X0 shape must be (N, 3), got {X0.shape}')
@@ -27,7 +29,7 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
         raise ValueError(f'X1 shape must be (N, 3), got {X1.shape}')
     if len(Sigma.shape) != 2 or Sigma.shape[1] != 3:
         raise ValueError(f'Sigma shape must be (N, 3), got {Sigma.shape}')
-    
+
     # Pre-allocate tensors for intermediate calculations
     batch_size = X0.size(0)
     grid_size = x.size()
@@ -56,7 +58,7 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
     # Calculate delta terms
     deltaSquare = (
         sysz2 * dx01**2 +
-        sxsy2 * dz01**2 + 
+        sxsy2 * dz01**2 +
         sxsz2 * dy01**2
     )
     deltaSquareSqrt = torch.sqrt(deltaSquare)
@@ -67,7 +69,7 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
 
     # Pre-allocate the final result tensor
 
-    
+
     # Run 10 times and accumulate results
 
     charge += -QoverDeltaSquareSqrt4pi * torch.exp(-0.5 * (
@@ -93,7 +95,7 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     """
     Calculate the 3D Gaussian convolution along a line segment with masking.
     This function computes the charge distribution from a line-segment source
-    convoluted with a 3D Gaussian distribution, but only at the positions 
+    convoluted with a 3D Gaussian distribution, but only at the positions
     where `mask` is True.
 
     Args:
@@ -115,7 +117,7 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
             where `mask` is True.
     """
     sqrt2 = np.sqrt(2)
-    
+
     Q = Q.to(device, dtype=torch.float32)
     X0 = X0.to(device, dtype=torch.float32)
     X1 = X1.to(device, dtype=torch.float32)
@@ -123,7 +125,7 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     x = x.to(device, dtype=torch.float32)
     y = y.to(device, dtype=torch.float32)
     z = z.to(device, dtype=torch.float32)
-        
+
     # Ensure correct shapes
     if len(X0.shape) != 2 or X0.shape[1] != 3:
         raise ValueError(f'X0 shape must be (N, 3), got {X0.shape}')
@@ -131,7 +133,7 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
         raise ValueError(f'X1 shape must be (N, 3), got {X1.shape}')
     if len(Sigma.shape) != 2 or Sigma.shape[1] != 3:
         raise ValueError(f'Sigma shape must be (N, 3), got {Sigma.shape}')
-    
+
     # Pre-allocate tensors for intermediate calculations
     batch_size = X0.size(0)
     grid_size = x.size()
@@ -154,21 +156,21 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     x1 = X1[:, 0].view(batch_size, 1)
     y1 = X1[:, 1].view(batch_size, 1)
     z1 = X1[:, 2].view(batch_size, 1)
-    
+
     sx = Sigma[:, 0].view(batch_size, 1)
     sy = Sigma[:, 1].view(batch_size, 1)
     sz = Sigma[:, 2].view(batch_size, 1)
-    
+
     # Prepare coordinates for broadcasting
     xpos = xpos.unsqueeze(0)  # [1, Nmask]
     ypos = ypos.unsqueeze(0)  # [1, Nmask]
     zpos = zpos.unsqueeze(0)  # [1, Nmask]
-    
+
     # Calculate differences [batch_size, 1]
     dx01 = x0 - x1
     dy01 = y0 - y1
     dz01 = z0 - z1
-    
+
     # Calculate squared terms [batch_size, 1]
     sx2 = sx**2
     sy2 = sy**2
@@ -176,27 +178,27 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     sxsy2 = (sx * sy)**2
     sxsz2 = (sx * sz)**2
     sysz2 = (sy * sz)**2
-    
+
     # Calculate delta terms [batch_size, 1]
     deltaSquare = (
         sysz2 * dx01**2 +
-        sxsy2 * dz01**2 + 
+        sxsy2 * dz01**2 +
         sxsz2 * dy01**2
     )
     deltaSquareSqrt = torch.sqrt(deltaSquare)
-    
+
     # Calculate denominators [batch_size, 1]
     QoverDelta = Q / (deltaSquareSqrt * 4.0 * np.pi)
     erfArgDenominator = sqrt2 * deltaSquareSqrt * sx * sy * sz
-    
-    
+
+
     # Calculate exponential term [batch_size, Nmask]
     exp_term = torch.exp(-0.5 * (
         sy2 * torch.pow(xpos * dz01 + (z1*x0 - z0*x1) - zpos * dx01, 2) +
         sx2 * torch.pow(ypos * dz01 + (z1*y0 - z0*y1) - zpos * dy01, 2) +
         sz2 * torch.pow(ypos * dx01 + (x1*y0 - x0*y1) - xpos * dy01, 2)
     ) / deltaSquare)
-    
+
     # Calculate error function term [batch_size, Nmask]
     erf_term = (
         torch.erf((
@@ -210,13 +212,13 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
             sxsz2 * (ypos - y1) * dy01
         ) / erfArgDenominator)
     )
-    
+
     # Calculate masked charge values [batch_size, Nmask]
     masked_charge = -QoverDelta * exp_term * erf_term
-    
+
     # Assign computed values back to the full grid
     charge[:, x_indices, y_indices, z_indices] = masked_charge
-    
+
     return charge
 
 
@@ -224,11 +226,11 @@ def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
     result2 = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
 
-    
+
 
     result1_mask = result1[:, mask]  # This will broadcast the batch dimension across the masked elements
     result2_mask = result2[:, mask]  # This will broadcast the batch dimension across the masked elements
-    
+
     # print(result1_mask)
     # print(result2_mask)
     # print(result1_mask - result2_mask)
@@ -236,7 +238,7 @@ def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     relative_diff = torch.abs(result1_mask - result2_mask) / (torch.abs(result1_mask) + 1e-10)
     max_diff = torch.max(relative_diff)
     mean_diff = torch.mean(relative_diff)
-    
+
     #print(result1- result2)
     max_element = torch.max(result1_mask - result2_mask)
     min_element = torch.min(result1_mask - result2_mask)
@@ -249,13 +251,13 @@ def create_grid_3d(origin, spacing, shape, device='cuda'):
     Create a 3D grid for charge calculation.
     """
     # Create 1D tensors first
-    x = torch.arange(origin[0], origin[0] + shape[0] * spacing[0], spacing[0], 
+    x = torch.arange(origin[0], origin[0] + shape[0] * spacing[0], spacing[0],
                     device=device, dtype=torch.float32)
-    y = torch.arange(origin[1], origin[1] + shape[1] * spacing[1], spacing[1], 
+    y = torch.arange(origin[1], origin[1] + shape[1] * spacing[1], spacing[1],
                     device=device, dtype=torch.float32)
-    z = torch.arange(origin[2], origin[2] + shape[2] * spacing[2], spacing[2], 
+    z = torch.arange(origin[2], origin[2] + shape[2] * spacing[2], spacing[2],
                     device=device, dtype=torch.float32)
-    
+
     # Create meshgrid
     x, y, z = torch.meshgrid(x, y, z, indexing='ij')
     return x, y, z
@@ -275,13 +277,13 @@ def main():
 
     # Create grid on GPU
     x, y, z = create_grid_3d(origin, spacing, shape, device)
-    
+
     # Define line segment parameters (directly on GPU)
     Q = torch.ones(nevent, device=device)
     X0 = torch.rand(nevent, 3, device=device)
     X1 = torch.rand(nevent, 3, device=device)
     Sigma = torch.full((nevent, 3), 0.2, device=device)
-    
+
     # # Making a mask
     # mask = torch.zeros(ndim, ndim, ndim, dtype=torch.bool)
     # num_ones = int(0.01 * mask.numel())  # 1% of total elements
@@ -315,8 +317,8 @@ def main():
         # X0 = torch.rand(nevent, 3, device=device)
         # X1 = torch.rand(nevent, 3, device=device)
         # Sigma = torch.full((nevent, 3), 0.2, device=device)
-    
-        # Original calculation 
+
+        # Original calculation
         print("Original Calculation")
         torch.cuda.reset_peak_memory_stats()
         start_time = time.time()
@@ -330,9 +332,9 @@ def main():
             m = tstats.adaptive_autorange(min_run_time=2)
             print(m)
             torig.append(m.mean)
-            
+
         # gpu_time = time.time() - start_time
-        
+
         # current_mem = torch.cuda.memory_allocated() / 1024**2
         # peak_mem = torch.cuda.max_memory_allocated() / 1024**2
         # print(f"Current GPU memory usage: {current_mem:.2f} MB")
@@ -342,7 +344,7 @@ def main():
         # del charge
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-       
+
         # New Calculation
         print("New Calculation")
         torch.cuda.reset_peak_memory_stats()
@@ -360,7 +362,7 @@ def main():
             tmask.append(m.mean)
 
         # gpu_time = time.time() - start_time
-        
+
         # current_mem = torch.cuda.memory_allocated() / 1024**2
         # peak_mem = torch.cuda.max_memory_allocated() / 1024**2
         # print(f"Current GPU memory usage: {current_mem:.2f} MB")
@@ -376,8 +378,8 @@ def main():
         torch.cuda.synchronize()
 
 
-    print(torig, tmask)
-    return torig, tmask
+    # print(torig, tmask)
+    return ffs, torig, tmask
 
     # print(f"Grid shape: {charge.shape}")
     # print(f"Total charge: {torch.sum(charge).item():.6f}")
@@ -389,13 +391,18 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         print(f"GPU available: {torch.cuda.get_device_name(0)}\n")
 
-    
+
     # Start tracing memory allocation
     tracemalloc.start()
 
     # GPU Operation
-    
-    main()
+
+    ffs, torig, tmask = main()
+    torig = np.array(torig).mean(axis=0)
+    plt.plot(ffs, tmask, 'o-', label='w/ mask')
+    plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
+
+    plt.savefig('profile_masks.png')
 
     # Get peak memory (CPU) usage
     # current, peak = tracemalloc.get_traced_memory()
