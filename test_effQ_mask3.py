@@ -72,7 +72,6 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
 
     # Run 10 times and accumulate results
 
-    charge = torch.zeros(result_shape)
     return charge
 
 
