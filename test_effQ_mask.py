@@ -191,7 +191,6 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     QoverDelta = Q / (deltaSquareSqrt * 4.0 * np.pi)
     erfArgDenominator = sqrt2 * deltaSquareSqrt * sx * sy * sz
 
-
     # Calculate exponential term [batch_size, Nmask]
     exp_term = torch.exp(-0.5 * (
         sy2 * torch.pow(xpos * dz01 + (z1*x0 - z0*x1) - zpos * dx01, 2) +
@@ -225,8 +224,6 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
 def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
     result2 = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
-
-
 
     result1_mask = result1[:, mask]  # This will broadcast the batch dimension across the masked elements
     result2_mask = result2[:, mask]  # This will broadcast the batch dimension across the masked elements
@@ -267,8 +264,8 @@ def main():
 
     torch.cuda.empty_cache()  # Clear any existing allocations
 
-    ndim = 100
-    nevent = 500
+    ndim = 33
+    nevent = 1_000
 
     # Define grid parameters
     origin = (0.0, 0.0, 0.0)
@@ -303,6 +300,8 @@ def main():
     ffs = [0.01 * i for i in range(1, 45, 2)]
     tmask = []
     torig = []
+    nmask = []
+    norig = []
 
     # Run multiple times
     for ff in ffs:
@@ -332,6 +331,7 @@ def main():
             m = tstats.adaptive_autorange(min_run_time=2)
             print(m)
             torig.append(m.mean)
+            # norig.append(tstats.collect_callgrind().counts(denoise=True))
 
         # gpu_time = time.time() - start_time
 
@@ -354,12 +354,13 @@ def main():
             tstats = benchmark.Timer(
                 stmt = 'gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)',
                 setup = 'from __main__ import gauss_conv_line_3d_mask',
-                globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z,
-                         'mask': mask, 'device' : device}
+                globals = {'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z,
+                           'mask' : mask, 'device' : device}
                 )
             m = tstats.blocked_autorange(min_run_time=2)
             print(m)
             tmask.append(m.mean)
+            # nmask.append(tstats.collect_callgrind().counts(denoise=True))
 
         # gpu_time = time.time() - start_time
 
@@ -379,7 +380,7 @@ def main():
 
 
     # print(torig, tmask)
-    return ffs, torig, tmask
+    return ffs, torig, tmask, norig, nmask
 
     # print(f"Grid shape: {charge.shape}")
     # print(f"Total charge: {torch.sum(charge).item():.6f}")
@@ -397,12 +398,22 @@ if __name__ == "__main__":
 
     # GPU Operation
 
-    ffs, torig, tmask = main()
+    ffs, torig, tmask, norig, nmask = main()
     torig = np.array(torig).mean(axis=0)
     plt.plot(ffs, tmask, 'o-', label='w/ mask')
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
+    plt.xlabel('Filling factor of mask')
+    plt.ylabel('mean of execution time [ms]')
 
     plt.savefig('profile_masks.png')
+
+    # norig = np.array(norig).mean(axis=0)
+    # plt.figure()
+    # plt.plot(ffs, nmask, 'o-', label='w/ mask')
+    # plt.hlines(norig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
+    # plt.xlabel('Filling factor of mask')
+    # plt.ylabel('mean of number of instructions')
+    # plt.savefig('profile_masks_ninstructions.png')
 
     # Get peak memory (CPU) usage
     # current, peak = tracemalloc.get_traced_memory()
