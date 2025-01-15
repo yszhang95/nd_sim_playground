@@ -429,7 +429,7 @@ if __name__ == "__main__":
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
     plt.xlabel('Filling factor of mask')
     plt.ylabel('mean of execution time [ms]')
-
+    plt.legend()
     plt.savefig('profile_masks2.png')
 
     # norig = np.array(norig).mean(axis=0)

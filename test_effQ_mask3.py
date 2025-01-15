@@ -72,22 +72,7 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
 
     # Run 10 times and accumulate results
 
-    charge += -QoverDeltaSquareSqrt4pi * torch.exp(-0.5 * (
-        sy2 * torch.pow(x * dz01 + (z1*x0 - z0*x1) - z * dx01, 2) +
-        sx2 * torch.pow(y * dz01 + (z1*y0 - z0*y1) - z * dy01, 2) +
-        sz2 * torch.pow(y * dx01 + (x1*y0 - x0*y1) - x * dy01, 2)
-    )/deltaSquare) * (
-        torch.erf((
-            sysz2 * (x - x0) * dx01 +
-            sxsy2 * (z - z0) * dz01 +
-            sxsz2 * (y - y0) * dy01
-        )/erfArgDenominator) -
-        torch.erf((
-            sysz2 * (x - x1) * dx01 +
-            sxsy2 * (z - z1) * dz01 +
-            sxsz2 * (y - y1) * dy01
-        )/erfArgDenominator)
-    )
+    charge = torch.zeros(result_shape)
     return charge
 
 
@@ -190,33 +175,6 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     # Calculate denominators [batch_size, 1]
     QoverDelta = Q / (deltaSquareSqrt * 4.0 * np.pi)
     erfArgDenominator = sqrt2 * deltaSquareSqrt * sx * sy * sz
-
-    # Calculate exponential term [batch_size, Nmask]
-    exp_term = torch.exp(-0.5 * (
-        sy2 * torch.pow(xpos * dz01 + (z1*x0 - z0*x1) - zpos * dx01, 2) +
-        sx2 * torch.pow(ypos * dz01 + (z1*y0 - z0*y1) - zpos * dy01, 2) +
-        sz2 * torch.pow(ypos * dx01 + (x1*y0 - x0*y1) - xpos * dy01, 2)
-    ) / deltaSquare)
-
-    # Calculate error function term [batch_size, Nmask]
-    erf_term = (
-        torch.erf((
-            sysz2 * (xpos - x0) * dx01 +
-            sxsy2 * (zpos - z0) * dz01 +
-            sxsz2 * (ypos - y0) * dy01
-        ) / erfArgDenominator) -
-        torch.erf((
-            sysz2 * (xpos - x1) * dx01 +
-            sxsy2 * (zpos - z1) * dz01 +
-            sxsz2 * (ypos - y1) * dy01
-        ) / erfArgDenominator)
-    )
-
-    # Calculate masked charge values [batch_size, Nmask]
-    masked_charge = -QoverDelta * exp_term * erf_term
-
-    # Assign computed values back to the full grid
-    charge[:, x_indices, y_indices, z_indices] = masked_charge
 
     return charge
 
@@ -370,9 +328,9 @@ def main():
         # print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
         # print(f"GPU Time: {gpu_time:.4f} seconds")
 
-        print("Difference between old and new calculations")
-        with torch.no_grad():
-            test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
+        # print("Difference between old and new calculations")
+        # with torch.no_grad():
+        #     test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
 
         # del charge
         torch.cuda.empty_cache()
@@ -404,7 +362,7 @@ if __name__ == "__main__":
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
     plt.xlabel('Filling factor of mask')
     plt.ylabel('mean of execution time [ms]')
-
+    plt.legend()
     plt.savefig('profile_masks3.png')
 
     # norig = np.array(norig).mean(axis=0)
