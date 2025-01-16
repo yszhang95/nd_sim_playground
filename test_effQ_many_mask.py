@@ -450,7 +450,7 @@ def _compute_charge_component(charge_vals, QoverDelta, erfArgDenom,
 
 def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
-    result2 = gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device)
+    result2 = gauss_conv_line_3d_mask_optimized2(Q, X0, X1, Sigma, x, y, z, mask, device)
 
 
 
@@ -587,8 +587,8 @@ def main():
         with torch.no_grad():
             # charge = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
             tstats = benchmark.Timer(
-                stmt = 'gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device)',
-                setup = 'from __main__ import gauss_conv_line_3d_mask_optimized',
+                stmt = 'gauss_conv_line_3d_mask_optimized2(Q, X0, X1, Sigma, x, y, z, mask, device)',
+                setup = 'from __main__ import gauss_conv_line_3d_mask_optimized2',
                 globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z,
                          'mask': mask, 'device' : device}
                 )
