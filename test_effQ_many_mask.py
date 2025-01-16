@@ -333,6 +333,120 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
 
     return charge
 
+def gauss_conv_line_3d_mask_optimized2(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
+    """
+    Further optimized version that minimizes memory usage and computations
+    """
+    sqrt2 = np.sqrt(2)
+
+    # Move tensors to device and ensure correct dtype
+    Q = Q.to(device, dtype=torch.float32)
+    X0 = X0.to(device, dtype=torch.float32)
+    X1 = X1.to(device, dtype=torch.float32)
+    Sigma = Sigma.to(device, dtype=torch.float32)
+    mask = mask.to(device)
+
+    # Shape validations
+    if len(X0.shape) != 2 or X0.shape[1] != 3:
+        raise ValueError(f'X0 shape must be (N, 3), got {X0.shape}')
+    
+    result_shape = x.size()
+    charge = torch.zeros(result_shape, device=device, dtype=torch.float32)
+    
+    # Get masked indices only once
+    batch_idx, x_idx, y_idx, z_idx = torch.where(mask)
+    
+    if len(batch_idx) == 0:
+        return charge
+
+    # Extract coordinates only for masked points (avoid expanding tensors)
+    xpos = x[batch_idx, x_idx, y_idx, z_idx]
+    ypos = y[batch_idx, x_idx, y_idx, z_idx]
+    zpos = z[batch_idx, x_idx, y_idx, z_idx]
+
+    # Get parameters for the relevant indices
+    Q_batch = Q[batch_idx]
+    x0, y0, z0 = X0[batch_idx].T
+    x1, y1, z1 = X1[batch_idx].T
+    sx, sy, sz = Sigma[batch_idx].T
+
+    # Pre-compute common terms (in-place where possible)
+    dx01 = x0.sub_(x1)  # In-place subtraction
+    dy01 = y0.sub_(y1)
+    dz01 = z0.sub_(z1)
+
+    # Square terms (in-place)
+    sx2 = sx.square_()
+    sy2 = sy.square_()
+    sz2 = sz.square_()
+    
+    # Pre-compute products (reuse memory)
+    sxy = sx.mul(sy)
+    sxz = sx.mul(sz)
+    syz = sy.mul(sz)
+    sxsy2 = sxy.square_()
+    sxsz2 = sxz.square_()
+    sysz2 = syz.square_()
+
+    # Calculate delta terms (reusing memory where possible)
+    deltaSquare = torch.addcmul(
+        torch.addcmul(
+            sysz2.mul_(dx01.square_()), 
+            sxsy2, 
+            dz01.square_()
+        ), 
+        sxsz2,
+        dy01.square_()
+    )
+    
+    deltaSquareSqrt = deltaSquare.sqrt_()
+    
+    # Compute charge values directly
+    QoverDelta = Q_batch.div(deltaSquareSqrt.mul_(4.0 * np.pi))
+    erfArgDenom = deltaSquareSqrt.mul_(sqrt2).mul_(sx).mul_(sy).mul_(sz)
+
+    # Calculate final values efficiently
+    charge_vals = torch.empty_like(xpos)
+    charge_vals = _compute_charge_component(
+        charge_vals, QoverDelta, erfArgDenom,
+        xpos, ypos, zpos, x0, y0, z0, x1, y1, z1,
+        sx2, sy2, sz2, sxsy2, sxsz2, sysz2,
+        dx01, dy01, dz01, deltaSquare
+    )
+
+    # Assign results
+    charge[batch_idx, x_idx, y_idx, z_idx] = charge_vals
+    return charge
+
+@torch.jit.script
+def _compute_charge_component(charge_vals, QoverDelta, erfArgDenom,
+                            xpos, ypos, zpos, x0, y0, z0, x1, y1, z1,
+                            sx2, sy2, sz2, sxsy2, sxsz2, sysz2,
+                            dx01, dy01, dz01, deltaSquare):
+    """
+    JIT-compiled helper function to compute the final charge values
+    """
+    # Compute exp term components
+    exp_term = (
+        sy2 * (xpos * dz01 + (z1*x0 - z0*x1) - zpos * dx01).square_() +
+        sx2 * (ypos * dz01 + (z1*y0 - z0*y1) - zpos * dy01).square_() +
+        sz2 * (ypos * dx01 + (x1*y0 - x0*y1) - xpos * dy01).square_()
+    ).div_(deltaSquare).mul_(-0.5).exp_()
+
+    # Compute erf term components
+    erf_term = torch.erf((
+        sysz2 * (xpos - x0) * dx01 +
+        sxsy2 * (zpos - z0) * dz01 +
+        sxsz2 * (ypos - y0) * dy01
+    ).div_(erfArgDenom))
+    
+    erf_term.sub_(torch.erf((
+        sysz2 * (xpos - x1) * dx01 +
+        sxsy2 * (zpos - z1) * dz01 +
+        sxsz2 * (ypos - y1) * dy01
+    ).div_(erfArgDenom)))
+
+    return -QoverDelta * exp_term * erf_term
 
 def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
