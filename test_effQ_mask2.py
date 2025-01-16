@@ -286,7 +286,7 @@ def main():
     torch.cuda.empty_cache()  # Clear any existing allocations
 
     ndim = 33
-    nevent = 1_000
+    nevent = 1_600
 
     # Define grid parameters
     origin = (0.0, 0.0, 0.0)
@@ -424,8 +424,9 @@ if __name__ == "__main__":
     # GPU Operation
 
     ffs, torig, tmask, norig, nmask = main()
-    torig = np.array(torig).mean(axis=0)
-    plt.plot(ffs, tmask, 'o-', label='w/ mask')
+    torig = np.array(torig).mean(axis=0) * 1E3
+    tmask = np.array(tmask) * 1E3
+    plt.plot(ffs, tmask, 'o-', label='w/ non-universal mask')
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
     plt.xlabel('Filling factor of mask')
     plt.ylabel('mean of execution time [ms]')
