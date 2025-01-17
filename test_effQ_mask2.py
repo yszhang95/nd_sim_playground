@@ -174,11 +174,6 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     sy = sy[b_indices, x_indices, y_indices, z_indices]
     sz = sz[b_indices, x_indices, y_indices, z_indices]
 
-    # Prepare coordinates for broadcasting
-    # xpos = xpos.unsqueeze(0)  # [1, Nmask]
-    # ypos = ypos.unsqueeze(0)  # [1, Nmask]
-    # zpos = zpos.unsqueeze(0)  # [1, Nmask]
-
     # Calculate differences [batch_size, 1]
     # [Nmask,]
     dx01 = x0 - x1
