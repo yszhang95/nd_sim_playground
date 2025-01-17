@@ -160,11 +160,6 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     sz = sz[b_indices, x_indices, y_indices, z_indices]
 
     # Prepare coordinates for broadcasting
-    # xpos = xpos.unsqueeze(0)  # [1, Nmask]
-    # ypos = ypos.unsqueeze(0)  # [1, Nmask]
-    # zpos = zpos.unsqueeze(0)  # [1, Nmask]
-
-    # Calculate differences [batch_size, 1]
     # [Nmask,]
     dx01 = x0 - x1
     dy01 = y0 - y1
@@ -198,8 +193,6 @@ def gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
 def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
     result2 = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
-
-
 
     # result1_mask = result1[:, mask]  # This will broadcast the batch dimension across the masked elements
     # result2_mask = result2[:, mask]  # This will broadcast the batch dimension across the masked elements
@@ -243,7 +236,7 @@ def main():
     torch.cuda.empty_cache()  # Clear any existing allocations
 
     ndim = 33
-    nevent = 1_000
+    nevent = 1_600
 
     # Define grid parameters
     origin = (0.0, 0.0, 0.0)
@@ -263,22 +256,6 @@ def main():
     X1 = torch.rand(nevent, 3, device=device)
     Sigma = torch.full((nevent, 3), 0.2, device=device)
 
-    # # Making a mask
-    # mask = torch.zeros(ndim, ndim, ndim, dtype=torch.bool)
-    # num_ones = int(0.01 * mask.numel())  # 1% of total elements
-    # indices = torch.randint(0, mask.numel(), (num_ones,))
-    # mask.view(-1)[indices] = True
-
-
-    # Warm-up runs
-    # print("Warming up...")
-    # for _ in range(3):
-    #     with torch.no_grad():
-    #         _ = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
-    #         _ = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
-    #     torch.cuda.synchronize()
-    #     torch.cuda.empty_cache()
-
     ffs = [0.01 * i for i in range(1, 55, 2)]
     tmask = []
     torig = []
@@ -293,14 +270,6 @@ def main():
         indices = torch.randint(0, mask.numel(), (n1,))
         mask.view(-1)[indices] = True
 
-        # Define line segment parameters (directly on GPU)
-        # Q = torch.ones(nevent, device=device)
-        # X0 = torch.rand(nevent, 3, device=device)
-        # X1 = torch.rand(nevent, 3, device=device)
-        # Sigma = torch.full((nevent, 3), 0.2, device=device)
-
-        # Original calculation
-        print("Original Calculation")
         torch.cuda.reset_peak_memory_stats()
         start_time = time.time()
         with torch.no_grad():
@@ -313,26 +282,15 @@ def main():
             m = tstats.adaptive_autorange(min_run_time=0.5)
             print(m)
             torig.append(m.mean)
-            # norig.append(tstats.collect_callgrind().counts(denoise=True))
-
-        # gpu_time = time.time() - start_time
-
-        # current_mem = torch.cuda.memory_allocated() / 1024**2
-        # peak_mem = torch.cuda.max_memory_allocated() / 1024**2
-        # print(f"Current GPU memory usage: {current_mem:.2f} MB")
-        # print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
-        # print(f"GPU Time: {gpu_time:.4f} seconds")
 
         # del charge
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
         # New Calculation
-        print("New Calculation")
         torch.cuda.reset_peak_memory_stats()
         start_time = time.time()
         with torch.no_grad():
-            # charge = gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)
             tstats = benchmark.Timer(
                 stmt = 'gauss_conv_line_3d_mask(Q, X0, X1, Sigma, x, y, z, mask, device)',
                 setup = 'from __main__ import gauss_conv_line_3d_mask',
@@ -342,32 +300,10 @@ def main():
             m = tstats.blocked_autorange(min_run_time=1)
             print(m)
             tmask.append(m.mean)
-            # nmask.append(tstats.collect_callgrind().counts(denoise=True))
-
-        # gpu_time = time.time() - start_time
-
-        # current_mem = torch.cuda.memory_allocated() / 1024**2
-        # peak_mem = torch.cuda.max_memory_allocated() / 1024**2
-        # print(f"Current GPU memory usage: {current_mem:.2f} MB")
-        # print(f"Peak GPU memory usage: {peak_mem:.2f} MB")
-        # print(f"GPU Time: {gpu_time:.4f} seconds")
-
-        # print("Difference between old and new calculations")
-        # with torch.no_grad():
-        #     test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
-
-        # del charge
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
-
-    # print(torig, tmask)
     return ffs, torig, tmask, norig, nmask
-
-    # print(f"Grid shape: {charge.shape}")
-    # print(f"Total charge: {torch.sum(charge).item():.6f}")
-    # print(f"Max charge density: {torch.max(charge).item():.6f}")
-    # print(f"Min charge density: {torch.min(charge).item():.6f}")
 
 
 if __name__ == "__main__":
@@ -381,23 +317,11 @@ if __name__ == "__main__":
     # GPU Operation
 
     ffs, torig, tmask, norig, nmask = main()
-    torig = np.array(torig).mean(axis=0)
-    plt.plot(ffs, tmask, 'o-', label='w/ mask')
+    torig = np.array(torig).mean(axis=0) * 1E3
+    tmask = np.array(tmask) * 1E3
+    plt.plot(ffs, tmask, 'o-', label='w/ non-universal mask')
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
     plt.xlabel('Filling factor of mask')
     plt.ylabel('mean of execution time [ms]')
-    plt.legend()
+    plt.legend(title='coef. only')
     plt.savefig('profile_masks4.png')
-
-    # norig = np.array(norig).mean(axis=0)
-    # plt.figure()
-    # plt.plot(ffs, nmask, 'o-', label='w/ mask')
-    # plt.hlines(norig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks')
-    # plt.xlabel('Filling factor of mask')
-    # plt.ylabel('mean of number of instructions')
-    # plt.savefig('profile_masks2_ninstructions.png')
-
-    # Get peak memory (CPU) usage
-    # current, peak = tracemalloc.get_traced_memory()
-    # print(f"\nCurrent memory usage: {current / 1024 / 1024:.2f} MB")
-    # print(f"Peak memory usage: {peak / 1024 / 1024:.2f} MB")
