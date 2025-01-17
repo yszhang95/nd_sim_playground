@@ -74,21 +74,22 @@ def gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device='cuda'):
 
     return charge
 
-
-def gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
+def gauss_conv_line_3d_mask_revised(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     """
-    Optimized version of gauss_conv_line_3d_mask that avoids unnecessary tensor expansions
+    Simplified version of GaussConvLine3D to calculate charge distribution
+    for a line segment in 3D space.
     """
     sqrt2 = np.sqrt(2)
 
-    # Move tensors to device and ensure correct dtype
     Q = Q.to(device, dtype=torch.float32)
     X0 = X0.to(device, dtype=torch.float32)
     X1 = X1.to(device, dtype=torch.float32)
     Sigma = Sigma.to(device, dtype=torch.float32)
-    mask = mask.to(device)
+    x = x.to(device, dtype=torch.float32)
+    y = y.to(device, dtype=torch.float32)
+    z = z.to(device, dtype=torch.float32)
 
-    # Shape validations
+    # Ensure correct shapes
     if len(X0.shape) != 2 or X0.shape[1] != 3:
         raise ValueError(f'X0 shape must be (N, 3), got {X0.shape}')
     if len(X1.shape) != 2 or X1.shape[1] != 3:
@@ -96,28 +97,17 @@ def gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device='c
     if len(Sigma.shape) != 2 or Sigma.shape[1] != 3:
         raise ValueError(f'Sigma shape must be (N, 3), got {Sigma.shape}')
 
+    # Pre-allocate tensors for intermediate calculations
+    batch_size = X0.size(0)
     result_shape = x.size()
+    grid_size = result_shape[1:]
     charge = torch.zeros(result_shape, device=device, dtype=torch.float32)
 
-    # Get masked indices only once
-    b_indices, x_indices, y_indices, z_indices = torch.where(mask)
-
-    if len(b_indices) == 0:
-        return charge
-
-    # Extract coordinates only for masked points
-    xpos = x[b_indices, x_indices, y_indices, z_indices]
-    ypos = y[b_indices, x_indices, y_indices, z_indices]
-    zpos = z[b_indices, x_indices, y_indices, z_indices]
-
-    # Get batch indices for parameter lookups
-    batch_idx = b_indices
-
-    # Extract parameters directly for the relevant batch indices
-    Q_masked = Q[batch_idx]
-    x0, y0, z0 = X0[batch_idx].T  # Transpose to get separate coordinates
-    x1, y1, z1 = X1[batch_idx].T
-    sx, sy, sz = Sigma[batch_idx].T
+    # Prepare for broadcasting
+    x0, y0, z0 = [X0[:,i].view(-1) for i in range(3)]
+    x1, y1, z1 = [X1[:,i].view(-1) for i in range(3)]
+    sx, sy, sz = [Sigma[:,i].view(-1) for i in range(3)]
+    Q = Q.view(-1)
 
     # Calculate differences
     dx01 = x0 - x1
@@ -125,12 +115,12 @@ def gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device='c
     dz01 = z0 - z1
 
     # Calculate squared terms
+    sxsy2 = (sx*sy)**2
+    sxsz2 = (sx*sz)**2
+    sysz2 = (sy*sz)**2
     sx2 = sx**2
     sy2 = sy**2
     sz2 = sz**2
-    sxsy2 = (sx * sy)**2
-    sxsz2 = (sx * sz)**2
-    sysz2 = (sy * sz)**2
 
     # Calculate delta terms
     deltaSquare = (
@@ -140,19 +130,54 @@ def gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device='c
     )
     deltaSquareSqrt = torch.sqrt(deltaSquare)
 
-    # Calculate denominators
-    QoverDelta = Q_masked / (deltaSquareSqrt * 4.0 * np.pi)
+    # Calculate charge distribution
+    QoverDeltaSquareSqrt4pi = Q / (deltaSquareSqrt * 4 * np.pi)
     erfArgDenominator = sqrt2 * deltaSquareSqrt * sx * sy * sz
+
+    # Pre-allocate the final result tensor
+    # Extract coordinates only for masked points
+    # Get batch indices for parameter lookups
+    b_indices, x_indices, y_indices, z_indices = torch.where(mask)
+    batch_idx = b_indices
+
+    xpos = x[b_indices, x_indices, y_indices, z_indices]
+    ypos = y[b_indices, x_indices, y_indices, z_indices]
+    zpos = z[b_indices, x_indices, y_indices, z_indices]
+
+    # Extract parameters directly for the relevant batch indices
+    Q_masked = Q[batch_idx]
+    x0, y0, z0 = X0[batch_idx].T  # Transpose to get separate coordinates
+    x1, y1, z1 = X1[batch_idx].T
+    sx, sy, sz = Sigma[batch_idx].T
+
+    # Calculate differences
+    dx01 = dx01[batch_idx]
+    dy01 = dy01[batch_idx]
+    dz01 = dz01[batch_idx]
+
+    # Calculate squared terms
+    sx2 = sx2[batch_idx]
+    sy2 = sy2[batch_idx]
+    sz2 = sz2[batch_idx]
+    sxsy2 = sxsy2[batch_idx]
+    sxsz2 = sxsy2[batch_idx]
+    sysz2 = sxsy2[batch_idx]
+
+    # Calculate delta terms
+    deltaSquare = deltaSquare[batch_idx]
+    deltaSquareSqrt = deltaSquareSqrt[batch_idx]
+
+    # Calculate denominators
+    QoverDelta = QoverDeltaSquareSqrt4pi[batch_idx]
+    erfArgDenominator = erfArgDenominator[batch_idx]
+
+    # Run 10 times and accumulate results
 
     return charge
 
-
-
-
-
 def test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device='cuda'):
     result1 = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
-    result2 = gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device)
+    result2 = gauss_conv_line_3d_mask_revised(Q, X0, X1, Sigma, x, y, z, mask, device)
 
 
 
@@ -254,19 +279,24 @@ def main():
         start_time = time.time()
         with torch.no_grad():
             tstats = benchmark.Timer(
-                stmt = 'gauss_conv_line_3d_mask_optimized(Q, X0, X1, Sigma, x, y, z, mask, device)',
-                setup = 'from __main__ import gauss_conv_line_3d_mask_optimized',
+                stmt = 'gauss_conv_line_3d_mask_revised(Q, X0, X1, Sigma, x, y, z, mask, device)',
+                setup = 'from __main__ import gauss_conv_line_3d_mask_revised',
                 globals={'Q' : Q, 'X0' : X0, 'X1': X1, 'Sigma' : Sigma, 'x' : x, 'y' : y, 'z' : z,
                          'mask': mask, 'device' : device}
                 )
             m = tstats.blocked_autorange(min_run_time=1)
             print(m)
             tmask.append(m.mean)
+        print("Difference between old and new calculations")
+        with torch.no_grad():
+            test_consistency(Q, X0, X1, Sigma, x, y, z, mask, device)
+
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
-    return ffs, torig, tmask, norig, nmask
+    q = gauss_conv_line_3d_orig(Q, X0, X1, Sigma, x, y, z, device)
 
+    return ffs, torig, tmask, q
 
 if __name__ == "__main__":
     if torch.cuda.is_available():
@@ -278,13 +308,13 @@ if __name__ == "__main__":
 
     # GPU Operation
 
-    ffs, torig, tmask, norig, nmask = main()
+    ffs, torig, tmask, q = main()
     torig = np.array(torig).mean(axis=0) * 1E3
     tmask = np.array(tmask) * 1E3
-    plt.plot(ffs, tmask, 'o-', label='w/ mask;claude')
+    plt.plot(ffs, tmask, 'o-', label='w/ mask;coef. expand later')
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks; x,y,z,full size')
     plt.xlabel('Filling factor of mask')
     plt.ylabel('mean of execution time [ms]')
-    plt.legend(title='coeof. only; no exp/erf')
-    plt.title('output shape (1600, 33, 33, 33)')
-    plt.savefig('profile_masks_claude2.png')
+    plt.legend(title='no exp/erf')
+    plt.title(f'output shape {list(q.shape)}')
+    plt.savefig('profile_masks_claude4.png')
