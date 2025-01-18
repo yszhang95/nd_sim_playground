@@ -1,0 +1,4 @@
+*.png
+*.pickle
+venv
+*pyc
