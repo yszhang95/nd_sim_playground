@@ -325,6 +325,6 @@ if __name__ == "__main__":
     plt.hlines(torig, xmin=ffs[0], xmax=ffs[-1], linestyles='dashed', label='w/o masks; x,y,z,full size')
     plt.xlabel('Filling factor of mask')
     plt.ylabel('mean of execution time [ms]')
-    plt.legend('full calculation')
+    plt.legend(title='full calculation')
     plt.title('output shape (200, 2, 2, 2, 33, 33, 33)')
     plt.savefig('profile_masks_claude5.png')
