@@ -34,10 +34,23 @@ def test1(dtype=torch.float32):
         ts.append(elapsed)
 
     for i in range(20):
+        n = 50_000_000
+        x = 3*torch.rand(n, dtype=torch.float32, device='cuda', requires_grad=False)
+        x = x.to(dtype)
+        torch.cuda.synchronize()
+        start_epoch = time.time()
+        qjit(x)
+        torch.cuda.synchronize()
+        end_epoch = time.time()
+        elapsed = end_epoch - start_epoch
+        ns.append(n)
+        ts.append(elapsed)
+
+    for i in range(20):
         n = ns[i]
         elapsed = ts[i]
         print('Elapsed', elapsed*1E3, 'ms for n =',n)
-    for i in range(20):
+    for i in range(len(ns)):
         n = ns[i]
         elapsed = ts[i]
         print('Average is', elapsed*1E9/n, 'ns for n =',n)
